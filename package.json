@@ -4,8 +4,8 @@
   "description": "Internal support ticket REST API",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js",
-    "dev": "nodemon src/app.js",
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
     "test": "jest --coverage",
     "lint": "eslint src/**/*.js"
   },
