@@ -1,0 +1,35 @@
+{
+  "env": {
+    "node": true,
+    "jest": true,
+    "es2021": true
+  },
+  "extends": "eslint:recommended",
+  "parserOptions": {
+    "ecmaVersion": 2021
+  },
+  "rules": {
+    "no-unused-vars": "error",
+    "no-console": "off",
+    "semi": ["error", "always"],
+    "quotes": ["error", "single"],
+    "indent": ["error", 2],
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error"
+  }
+}
+```
+
+---
+
+### What this is
+
+This is ESLint's configuration file — the JavaScript equivalent of flake8's settings. It tells ESLint exactly what rules to enforce when the pipeline runs `npm run lint`.
+
+**`env` block**
+Tells ESLint what global variables are available:
+```
+node: true    — allows Node.js globals like require, process, module
+jest: true    — allows Jest globals like describe, test, expect, beforeEach
+es2021: true  — allows modern JavaScript syntax
