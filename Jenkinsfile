@@ -6,7 +6,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -52,10 +51,10 @@ pipeline {
                 withCredentials([usernamePassword(
                     credentialsId: 'ghcr-credentials',
                     usernameVariable: 'GHCR_USER',
-                    passwordVariable: 'GHCR_TOCKEN'
+                    passwordVariable: 'GHCR_TOKEN'
                 )]) {
                     sh """
-                        echo \$GHCR_TOCKEN | docker login ghcr.io -u \$GHCR_USER --password-stdin
+                        echo \$GHCR_TOKEN | docker login ghcr.io -u \$GHCR_USER --password-stdin
                         docker push ${GHCR_IMAGE}:${GIT_SHA}
                     """
                 }
@@ -68,16 +67,16 @@ pipeline {
                 withCredentials([usernamePassword(
                     credentialsId: 'ghcr-credentials',
                     usernameVariable: 'GHCR_USER',
-                    passwordVariable: 'GHCR_TOCKEN'
+                    passwordVariable: 'GHCR_TOKEN'
                 )]) {
                     sh """
-                        echo \$GHCR_TOCKEN | docker login ghcr.io -u \$GHCR_USER --password-stdin
+                        echo \$GHCR_TOKEN | docker login ghcr.io -u \$GHCR_USER --password-stdin
                         docker pull ${GHCR_IMAGE}:${GIT_SHA}
-                        docker stop support-ticket-api-staging || true
-                        docker rm support-ticket-api-staging || true
+                        docker stop support-ticket-staging || true
+                        docker rm support-ticket-staging || true
                         docker run -d \
-                            --name support-ticket-api-staging \
-                            -p 5000:5000 \
+                            --name support-ticket-staging \
+                            -p 3000:3000 \
                             --restart unless-stopped \
                             ${GHCR_IMAGE}:${GIT_SHA}
                     """
@@ -99,8 +98,8 @@ pipeline {
             when { branch 'main' }
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
-                    input message: 'Staging successful. Permission required to deploy to production:',
-                        ok: 'Deploy to Production'
+                    input message: 'Staging successful. Deploy to production?',
+                          ok: 'Deploy to Production'
                 }
             }
         }
@@ -110,12 +109,119 @@ pipeline {
             steps {
                 script {
                     def previousSha = sh(
-                        script: docker inspect support-prod --format '{{.Config.Image}}' 2>/dev/null | cut -d: -f2 || echo 'none'",
+                        script: "docker inspect support-ticket-prod --format '{{.Config.Image}}' 2>/dev/null | cut -d: -f2 || echo 'none'",
                         returnStdout: true
                     ).trim()
+
+                    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                        withCredentials([usernamePassword(
+                            credentialsId: 'ghcr-credentials',
+                            usernameVariable: 'GHCR_USER',
+                            passwordVariable: 'GHCR_TOKEN'
+                        )]) {
+                            sh """
+                                echo \$GHCR_TOKEN | docker login ghcr.io -u \$GHCR_USER --password-stdin
+                                docker pull ${GHCR_IMAGE}:${GIT_SHA}
+                                docker stop support-ticket-prod || true
+                                docker rm support-ticket-prod || true
+                                docker run -d \
+                                    --name support-ticket-prod \
+                                    -p 80:3000 \
+                                    --restart unless-stopped \
+                                    ${GHCR_IMAGE}:${GIT_SHA}
+                            """
+                        }
+
+                        sh '''
+                            sleep 5
+                            curl -f http://localhost:80/health
+                        '''
+                    }
+
+                    if (currentBuild.result == 'FAILURE') {
+                        echo "Deploy failed. Rolling back to ${previousSha}..."
+                        if (previousSha != 'none') {
+                            sh """
+                                docker stop support-ticket-prod || true
+                                docker rm support-ticket-prod || true
+                                docker run -d \
+                                    --name support-ticket-prod \
+                                    -p 80:3000 \
+                                    --restart unless-stopped \
+                                    ${GHCR_IMAGE}:${previousSha}
+                            """
+                        }
+                    }
                 }
             }
         }
+    }
 
+    post {
+        success {
+            withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_URL')]) {
+                sh """
+                    curl -X POST -H 'Content-type: application/json' \
+                    --data '{
+                        "text": ":) BUILD PASSED",
+                        "attachments": [
+                            {
+                                "color": "good",
+                                "fields": [
+                                    {"title": "Job", "value": "${env.JOB_NAME}", "short": true},
+                                    {"title": "Branch", "value": "${env.BRANCH_NAME}", "short": true},
+                                    {"title": "Commit", "value": "${env.GIT_SHA}", "short": true},
+                                    {"title": "Build", "value": "#${env.BUILD_NUMBER}", "short": true},
+                                    {"title": "URL", "value": "${env.BUILD_URL}"}
+                                ]
+                            }
+                        ]
+                    }' \$SLACK_URL
+                """
+            }
+        }
+        failure {
+            withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_URL')]) {
+                sh """
+                    curl -X POST -H 'Content-type: application/json' \
+                    --data '{
+                        "text": ":( BUILD FAILED",
+                        "attachments": [
+                            {
+                                "color": "danger",
+                                "fields": [
+                                    {"title": "Job", "value": "${env.JOB_NAME}", "short": true},
+                                    {"title": "Branch", "value": "${env.BRANCH_NAME}", "short": true},
+                                    {"title": "Commit", "value": "${env.GIT_SHA}", "short": true},
+                                    {"title": "Build", "value": "#${env.BUILD_NUMBER}", "short": true},
+                                    {"title": "URL", "value": "${env.BUILD_URL}"}
+                                ]
+                            }
+                        ]
+                    }' \$SLACK_URL
+                """
+            }
+        }
+        aborted {
+            withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_URL')]) {
+                sh """
+                    curl -X POST -H 'Content-type: application/json' \
+                    --data '{
+                        "text": " :| BUILD ABORTED",
+                        "attachments": [
+                            {
+                                "color": "warning",
+                                "fields": [
+                                    {"title": "Job", "value": "${env.JOB_NAME}", "short": true},
+                                    {"title": "Branch", "value": "${env.BRANCH_NAME}", "short": true},
+                                    {"title": "Build", "value": "#${env.BUILD_NUMBER}", "short": true},
+                                    {"title": "URL", "value": "${env.BUILD_URL}"}
+                                ]
+                            }
+                        ]
+                    }' \$SLACK_URL
+                """
+            }
+        }
     }
 }
