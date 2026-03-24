@@ -73,8 +73,46 @@ pipeline {
                     sh """
                         echo \$GHCR_TOCKEN | docker login ghcr.io -u \$GHCR_USER --password-stdin
                         docker pull ${GHCR_IMAGE}:${GIT_SHA}
-                        docker stop 
+                        docker stop support-ticket-api-staging || true
+                        docker rm support-ticket-api-staging || true
+                        docker run -d \
+                            --name support-ticket-api-staging \
+                            -p 5000:5000 \
+                            --restart unless-stopped \
+                            ${GHCR_IMAGE}:${GIT_SHA}
                     """
+                }
+            }
+        }
+
+        stage('Smoke Test') {
+            when { branch 'main' }
+            steps {
+                sh '''
+                    sleep 5
+                    curl -f http://localhost:3000/health
+                '''
+            }
+        }
+
+        stage('Approval Gate') {
+            when { branch 'main' }
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    input message: 'Staging successful. Permission required to deploy to production:',
+                        ok: 'Deploy to Production'
+                }
+            }
+        }
+
+        stage('Deploy to Production') {
+            when { branch 'main' }
+            steps {
+                script {
+                    def previousSha = sh(
+                        script: docker inspect support-prod --format '{{.Config.Image}}' 2>/dev/null | cut -d: -f2 || echo 'none'",
+                        returnStdout: true
+                    ).trim()
                 }
             }
         }
