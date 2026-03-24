@@ -28,7 +28,9 @@ pipeline {
 
         stage('Test') {
             steps {
-                sh 'npm test'
+                timeout(time: 2, unit: 'MINUTES') {
+                    sh 'npm test'
+                }
             }
         }
 
@@ -150,6 +152,9 @@ pipeline {
                                     --restart unless-stopped \
                                     ${GHCR_IMAGE}:${previousSha}
                             """
+                            echo "Rollback complete. Running image: ${previousSha}"
+                        } else {
+                            echo "No previous image found. Attend Manully."
                         }
                     }
                 }
